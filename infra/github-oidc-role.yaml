@@ -52,7 +52,11 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${BranchName}'
+              StringLike:
+                # Jobs that use `environment:` send the environment in the sub claim, not the branch
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${BranchName}'
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
       Policies:
         - PolicyName: app3-deploy
           PolicyDocument:
