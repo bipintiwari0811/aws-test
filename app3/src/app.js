@@ -17,7 +17,7 @@ function createApp(config) {
       app: 'app3',
       environment: config.nodeEnv,
       dbUser: config.db.user || null,
-      // Never return the password itself - only whether it was loaded
+      // Never return the password itself - only whether it was loaded ok
       secretLoaded: Boolean(config.db.password),
     });
   });
