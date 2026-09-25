@@ -4,6 +4,12 @@ Description: GitHub Actions OIDC access for deploying app3 (no long-lived AWS ke
 Parameters:
   GitHubOrg:    { Type: String, Description: GitHub user or org name }
   GitHubRepo:   { Type: String, Description: Repository name only }
+  GitHubOwnerId:
+    Type: String
+    Description: Numeric GitHub user/org ID (repos created after 2026-07-15 use it in the OIDC sub claim)
+  GitHubRepoId:
+    Type: String
+    Description: Numeric GitHub repository ID
   BranchName:   { Type: String, Default: main }
   EcrRepoName:  { Type: String, Default: app3 }
   ServiceStackName: { Type: String, Default: app3-service }
@@ -54,7 +60,10 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
                 # Jobs that use `environment:` send the environment in the sub claim, not the branch
+                # Immutable format (new repos) + classic name-only format (older repos)
                 token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/heads/${BranchName}'
+                  - !Sub 'repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:environment:production'
                   - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${BranchName}'
                   - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
       Policies:
