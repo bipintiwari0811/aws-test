@@ -12,6 +12,11 @@ Parameters:
   ListenerRulePriority: { Type: Number, Default: 30 }
   ContainerPort:      { Type: Number, Default: 3000 }
   DbUsername:         { Type: String, Default: appuser }
+  AssignPublicIp:
+    Type: String
+    AllowedValues: [ENABLED, DISABLED]
+    Default: DISABLED
+    Description: ENABLED when tasks run in public subnets (no NAT)
 
 Resources:
   # ---------- Secret (generated once, kept if stack is deleted/replaced) ----------
@@ -158,7 +163,7 @@ Resources:
         DeploymentCircuitBreaker: { Enable: true, Rollback: true }
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
+          AssignPublicIp: !Ref AssignPublicIp
           Subnets: !Ref PrivateSubnets
           SecurityGroups: [!Ref ServiceSG]
       LoadBalancers:

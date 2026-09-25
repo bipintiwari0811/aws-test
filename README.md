@@ -15,8 +15,11 @@ app3/
   test/                             Jest + Supertest tests
   Dockerfile
 infra/
+  base-network.yaml                 VPC, subnets, ALB (HTTP 80), ECS cluster (deploy once, manually)
   github-oidc-role.yaml             OIDC provider + deploy roles (deploy once, manually)
   app3-service.yaml                 Secret, IAM, task def, service, target group, listener rule, autoscaling
+scripts/
+  set-github-vars.sh                Copies stack outputs into GitHub Actions variables (needs gh CLI)
 ```
 
 ## Run locally
@@ -29,39 +32,67 @@ DB_USER=local DB_PASSWORD=local BASE_PATH=/app3 npm start
 curl http://localhost:3000/app3/health
 ```
 
-## One-time AWS setup
+## One-time AWS setup (fresh account)
 
-1. Deploy the OIDC roles (set `CreateOidcProvider=false` if the GitHub OIDC provider already exists in the account):
+```bash
+export AWS_REGION=ap-south-1
+export GH_USER=<github-user>
+export GH_REPO=<repo-name>
+```
+
+1. **Base infra** — VPC, subnets, ALB, ECS cluster. `UseNatGateway=false` runs tasks in public subnets
+   (cheapest for testing); `true` uses private subnets + NAT Gateway.
 
    ```bash
-   aws cloudformation deploy --stack-name github-oidc-app3 \
-     --template-file infra/github-oidc-role.yaml \
-     --capabilities CAPABILITY_IAM \
-     --parameter-overrides GitHubOrg=<github-user> GitHubRepo=<repo-name>
+   aws cloudformation deploy --region $AWS_REGION --stack-name app3-base \
+     --template-file infra/base-network.yaml --parameter-overrides UseNatGateway=false
    ```
 
-2. Create the ECR repo (if not already created):
+2. **GitHub OIDC roles** — set `CreateOidcProvider=false` if `aws iam list-open-id-connect-providers`
+   already shows `token.actions.githubusercontent.com`.
 
    ```bash
-   aws ecr create-repository --repository-name app3
+   aws cloudformation deploy --region $AWS_REGION --stack-name github-oidc-app3 \
+     --template-file infra/github-oidc-role.yaml --capabilities CAPABILITY_IAM \
+     --parameter-overrides GitHubOrg=$GH_USER GitHubRepo=$GH_REPO CreateOidcProvider=true
+   ```
+
+3. **ECR repo**
+
+   ```bash
+   aws ecr create-repository --region $AWS_REGION --repository-name app3 \
+     --image-scanning-configuration scanOnPush=true
    ```
 
 ## GitHub setup
 
+Run `./scripts/set-github-vars.sh` from the repo folder (requires `gh auth login`), or add these manually under
 Settings → Secrets and variables → Actions → **Variables**:
 
-| Variable | Example |
+| Variable | Source |
 |---|---|
-| `AWS_REGION` | `ap-south-1` |
-| `AWS_DEPLOY_ROLE_ARN` | output of `github-oidc-app3` stack |
-| `CFN_EXECUTION_ROLE_ARN` | output of `github-oidc-app3` stack |
-| `ECS_CLUSTER_NAME` | `my-java-app-cluster` |
-| `VPC_ID` | `vpc-0123...` |
-| `PRIVATE_SUBNETS` | `subnet-aaa,subnet-bbb` |
-| `ALB_LISTENER_ARN` | `arn:aws:elasticloadbalancing:...:listener/app/...` |
-| `ALB_SG_ID` | `sg-0123...` |
+| `AWS_REGION` | your region |
+| `AWS_DEPLOY_ROLE_ARN` | `github-oidc-app3` → `GitHubDeployRoleArn` |
+| `CFN_EXECUTION_ROLE_ARN` | `github-oidc-app3` → `CfnExecutionRoleArn` |
+| `ECS_CLUSTER_NAME` | `app3-base` → `ClusterName` |
+| `VPC_ID` | `app3-base` → `VpcId` |
+| `PRIVATE_SUBNETS` | `app3-base` → `TaskSubnets` |
+| `ASSIGN_PUBLIC_IP` | `app3-base` → `AssignPublicIp` |
+| `ALB_LISTENER_ARN` | `app3-base` → `AlbListenerArn` |
+| `ALB_SG_ID` | `app3-base` → `AlbSecurityGroupId` |
 
 Settings → Environments → create **production** (optionally add required reviewers).
+
+Then Actions → **app3 CI/CD** → Run workflow.
+
+## Verify
+
+```bash
+ALB=$(aws cloudformation describe-stacks --region $AWS_REGION --stack-name app3-base \
+  --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" --output text)
+curl http://$ALB/app3/health
+curl http://$ALB/app3        # expect "secretLoaded": true
+```
 
 ## Pipeline behaviour
 
@@ -87,3 +118,14 @@ Settings → Environments → create **production** (optionally add required rev
 | `/app3/health` | ALB health check |
 | `/app3` | App info (shows whether the secret loaded — never the value) |
 | `/app3/hello/:name` | Sample route |
+
+## Cleanup
+
+```bash
+aws cloudformation delete-stack --region $AWS_REGION --stack-name app3-service
+aws cloudformation wait stack-delete-complete --region $AWS_REGION --stack-name app3-service
+aws cloudformation delete-stack --region $AWS_REGION --stack-name app3-base
+aws cloudformation delete-stack --region $AWS_REGION --stack-name github-oidc-app3
+aws ecr delete-repository --region $AWS_REGION --repository-name app3 --force
+aws secretsmanager delete-secret --region $AWS_REGION --secret-id app3-service/app3/db --force-delete-without-recovery
+```
