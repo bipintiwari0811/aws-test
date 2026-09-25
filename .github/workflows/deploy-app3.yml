@@ -110,4 +110,10 @@ jobs:
         if: always()
         run: |
           aws cloudformation describe-stacks --stack-name $STACK_NAME \
-            --query 'Stacks[0].[StackStatus,Outputs]' --output table
+            --query 'Stacks[0].{Status:StackStatus,Outputs:Outputs}' --output json || true
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "---- Recent failures ----"
+            aws cloudformation describe-stack-events --stack-name $STACK_NAME \
+              --query "StackEvents[?contains(ResourceStatus,'FAILED')].[LogicalResourceId,ResourceStatusReason] | [0:5]" \
+              --output text || true
+          fi
